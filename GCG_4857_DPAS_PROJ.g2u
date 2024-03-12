@@ -1,0 +1,131 @@
+Program.Sub.ScreenSU.Start
+Gui.Form..Create
+Gui.Form..Caption("DPAS Project")
+Gui.Form..Size(10215,2070)
+Gui.Form..MinX(0)
+Gui.Form..MinY(0)
+Gui.Form..Position(0,0)
+Gui.Form..BackColor(-2147483633)
+Gui.Form..MousePointer(0)
+Gui.Form..Event(UnLoad,DPAS_UnLoad)
+Gui.Form.lbl1.Create(Label,"Project",True,780,255,0,510,330,True,0,"Arial",8,-2147483633,0)
+Gui.Form.chkDPAS.Create(CheckBox)
+Gui.Form.chkDPAS.Size(1290,360)
+Gui.Form.chkDPAS.Position(1875,510)
+Gui.Form.chkDPAS.TabStop(True)
+Gui.Form.chkDPAS.TabIndex(2)
+Gui.Form.chkDPAS.Caption("DPAS")
+Gui.Form.txtDPAS_Text.Create(TextBox,"",True,5130,300,0,3375,540,True,0,"Arial",8,-2147483643,1)
+Gui.Form.txtDPAS_Text.TabStop(True)
+Gui.Form.txtDPAS_Text.TabIndex(3)
+Gui.Form.txtDPAS_Text.MaxLength(50)
+Gui.Form.txtProj.Create(TextBox,"",True,1170,300,0,540,540,False,0,"Arial",8,-2147483643,1)
+Gui.Form.txtProj.TabStop(True)
+Gui.Form.txtProj.TabIndex(1)
+Gui.Form.lbl2.Create(Label,"DPAS Text",True,1320,255,0,3375,330,True,0,"Arial",8,-2147483633,0)
+Gui.Form.cmdSave.Create(Button)
+Gui.Form.cmdSave.Size(855,375)
+Gui.Form.cmdSave.Position(525,975)
+Gui.Form.cmdSave.TabStop(True)
+Gui.Form.cmdSave.TabIndex(4)
+Gui.Form.cmdSave.Caption("Save")
+Gui.Form.cmdSave.Event(Click,cmdSave_Click)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'BN, August 12, 2018
+'Project 4857 modified
+'Customer: Atec
+
+'Features:
+'A/Checkbox DPAS and Textbox DPAS Ratings are added to Project Master screen
+'The goal is that they want to have a control on purchasing parts required for WOs related to the link Project number.
+'This is to meet the government requirements.
+
+'B/ a dashboard can be opened from a custom menu item to follow the status of the SOs, WOs, POs of those purchased parts related to the DPAS SOs.
+'B1/ Get the Project numbers that are flagged DPAS from GCG_4857_DPAS_Proj
+'B2/ Get all the open Work Orders having those project numbers
+'B3/ With those WOs, break down to purchased parts (not miscellaneous seq)
+'B4/ User can mark the line with Note
+'B5/ User can create a PO from a line.
+'     The program will retrieve the top vendor of the Part from Inventory master XRef.
+'     If no Vendor is present then a prompt will display asking for the vendor to be selected.
+
+f.Intrinsic.Control.Try
+	v.Local..BulkDeclareString(sSQL,sError,sRet)
+'	Project Management > File > Projects > Open
+	F.Intrinsic.Control.SelectCase(v.Caller.Hook)
+		'Populate hook
+		f.Intrinsic.Control.Case(40401)
+			Variable.Passed.000057.Set("DPAS")	
+		'Script 1 button hook	
+		F.Intrinsic.Control.Case(40402)		
+			F.odbc.Connection!conx.OpenCompanyConnection
+			'Check if user put a valid project in the core screen project textobx
+			f.Intrinsic.Control.If(Variable.Passed.000002.Trim,=,"")
+				f.Intrinsic.UI.Msgbox("Invalid Project Number")
+				f.Intrinsic.Control.ExitSub
+			f.Intrinsic.Control.Else
+				'Project is valid, now pull DPAS info of that project to populate the custom screen
+				f.Intrinsic.String.Build("Select DPAS,DPAS_Text from GCG_4857_DPAS_Proj  where Project = '{0}'",Variable.Passed.000002,v.Local.sSQL)
+				f.ODBC.Connection!conx.ExecuteAndReturn(v.Local.sSQL,v.Local.sRet)
+				f.Intrinsic.Control.If(v.Local.sRet,<>,"")
+					f.Intrinsic.String.Split(v.Local.sRet,"*!*",v.Local.sRet)
+					gui.Form.chkDPAS.Value(v.Local.sRet(0))
+					gui.Form.txtDPAS_Text.Text(v.Local.sRet(1))
+				f.Intrinsic.Control.EndIf
+				gui.Form.txtProj.text(v.passed.000002)
+				gui.Form..Show
+			f.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndSelect
+		
+F.Intrinsic.Control.Catch
+	Function.Intrinsic.String.Build("Subroutine Error {0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+
+Program.Sub.Main.End
+
+Program.Sub.cmdSave_Click.Start
+'Save to GCG_4857_DPAS_Proj
+f.Intrinsic.Control.Try
+	v.Local..BulkDeclareString(sError,sSQL,sRet)
+	'Check to see if there is record exist then decide to insert or update
+	f.Intrinsic.String.Build("Select * from GCG_4857_DPAS_Proj Where Project = '{0}'",v.Screen.Form!txtProj.Text,v.Local.sSQL)
+	f.ODBC.Connection!conx.ExecuteAndReturn(v.Local.sSQL,v.Local.sRet)
+	f.Intrinsic.Control.If(v.Local.sRet,<>,"")
+		f.Intrinsic.String.Build("Update GCG_4857_DPAS_Proj set DPAS = {0},DPAS_Text = '{1}' where Project = '{2}'",v.Screen.Form!chkDPAS.Value,v.Screen.Form!txtDPAS_Text.Text,v.Screen.Form!txtProj.Text,v.Local.sSQL)
+		f.ODBC.Connection!conx.Execute(v.Local.sSQL)
+	f.Intrinsic.Control.Else
+		f.Intrinsic.String.Build("Insert into GCG_4857_DPAS_Proj (Project,DPAS,DPAS_Text) values ('{0}',{1},'{2}')",v.Screen.Form!txtProj.Text,v.Screen.Form!chkDPAS.Value,v.Screen.Form!txtDPAS_Text.Text,v.Local.sSQL)
+		f.ODBC.Connection!conx.Execute(v.Local.sSQL)
+	f.Intrinsic.Control.EndIf	
+	f.Intrinsic.Control.CallSub("DPAS_Unload")
+
+F.Intrinsic.Control.Catch
+	Function.Intrinsic.String.Build("Subroutine Error {0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+Program.Sub.cmdSave_Click.End
+
+Program.Sub.DPAS_UnLoad.Start
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare
+
+	F.Intrinsic.Control.If(V.ODBC.conx.State,=,1)
+		F.ODBC.Connection!conx.close
+	F.Intrinsic.Control.EndIf
+	
+	f.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	Function.Intrinsic.String.Build("Subroutine Error {0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End 
+F.Intrinsic.Control.EndTry
+Program.Sub.DPAS_UnLoad.End
