@@ -1,0 +1,5 @@
+CREATE TABLE "GCG_4857_MPO_Note"(
+ "WO_ID" CHAR(17),
+ "Marked_PO" BIT,
+ "NOTE" LONGVARCHAR)
+;
