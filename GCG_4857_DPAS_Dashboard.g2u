@@ -1,0 +1,307 @@
+Program.Sub.ScreenSU.Start
+Gui.Form..Create
+Gui.Form..Caption("DPAS Purchasing")
+Gui.Form..Size(23820,13935)
+Gui.Form..MinX(0)
+Gui.Form..MinY(0)
+Gui.Form..Position(0,0)
+Gui.Form..BackColor(-2147483633)
+Gui.Form..MousePointer(0)
+Gui.Form..Event(UnLoad,Form_UnLoad)
+Gui.Form.cmdRefresh.Create(Button)
+Gui.Form.cmdRefresh.Size(855,375)
+Gui.Form.cmdRefresh.Position(22410,12825)
+Gui.Form.cmdRefresh.Caption("Refresh")
+Gui.Form.cmdRefresh.Event(Click,cmdRefresh_Click)
+Gui.Form.gsActive.Create(GsGridControl)
+Gui.Form.gsActive.Size(23115,12000)
+Gui.Form.gsActive.Position(195,705)
+Gui.Form.gsActive.Event(RowCellClick,gsActive_RowCellClick1)
+Gui.Form.gsActive.Event(CellValueChanged,gsActive_CellValueChanged)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+v.Global.bInSecurityGroup.Declare
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'BN, July 30, 2018
+'This project will allow for DPAS Rating to be set.
+
+'Features:
+'A/Checkbox DPAS and Textbox DPAS Ratings are added to Project Master screen
+'The goal is that they want to have a control on purchasing parts required for WOs related to the link Project number.
+'This is to meet the government requirements.
+
+'B/ a dashboard can be opened from a custom menu item to follow the status of the SOs, WOs, POs of those purchased parts related to the DPAS Project.
+'B1/ Get the Project numbers that are flagged DPAS from GCG_4857_DPAS_Proj
+'B2/ Get all the open Work Orders having those project numbers
+'B3/ With those WOs, break down to purchased parts (not miscellaneous seq)
+'B4/ User can mark the line with Note
+'B5/ User can create a PO from a line.
+'     The program will retrieve the top vendor of the Part from Inventory master XRef.
+'     If no Vendor is present then a prompt will display asking for the vendor to be selected.
+
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare
+	F.odbc.Connection!conx.OpenCompanyConnection(600)
+	f.Global.Security.IsInGroup(v.Caller.User,"DPASEDIT",v.Caller.CompanyCode,v.Global.bInSecurityGroup)
+	f.Intrinsic.UI.InvokeWaitDialog("Processing DPAS dashboard...")
+	f.Intrinsic.Control.CallSub("cmdRefresh_Click")	
+	f.Intrinsic.UI.CloseWaitDialog
+
+F.Intrinsic.Control.Catch
+	Function.Intrinsic.String.Build("Subroutine Error {0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.cmdRefresh_Click.Start
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare
+	
+	F.Intrinsic.Control.If(V.DataTable.DPS.Exists)
+		Gui.Form.gsActive.ClearRows("ActiveGV")
+		f.Data.DataTable.Close("DPS")
+	F.Intrinsic.Control.EndIf
+	
+	'Select to display in the dashboard following logic in B section above
+	f.Data.DataTable.CreateFromSQL("DPS","conx","Select g.Project as Proj,'' as Order_No,'' as Order_Line,g.DPAS_TEXT,o.Job,o.Suffix,o.Seq,o.Part, Qty_Onhand,Qty_Required,Qty_OnOrder_PO,o.Job + o.Suffix as Job_Suffix from V_Job_Operations o left join V_Job_Header  h on o.Job = h.job and o.suffix = h.suffix left join V_Inventory_Mstr i1 on o.part = i1.part left join V_Inventory_mst2 i2 on o.part = i2.part inner join GCG_4857_DPAS_PROJ g on h.Project =  g.Project where  h.Date_closed = '1900-01-01' and  FLAG_CLOSED <> 'Y' and o.LMO = 'M'  and o.seq < '900000'  and code_source = 'P' Order by g.Project,o.Job,o.Suffix,o.Seq",True)
+	
+	f.Data.DataTable.AddColumn("DPS","Marked_PO","boolean",False)
+	f.Data.DataTable.AddColumn("DPS","Note","String","")
+	f.Data.DataTable.AddColumn("DPS","CreatePO","String","Create PO")
+		
+	f.Data.DataTable.AddExpressionColumn("DPS","WO_ID","String","JOB + '-' + SUFFIX + '-' + SEQ")
+	f.Data.DataTable.AddColumn("DPS","WO_Req","Float",0)
+	f.Data.DataTable.AddExpressionColumn("DPS","Net","float","Qty_OnHand + qty_onorder_po - Qty_Required")
+	
+	'Marked_PO_Dict
+	f.Data.Dictionary.CreateFromSQL("Marked_PO_Dict","conx","Select WO_ID, Marked_PO from GCG_4857_MPO_Note")
+	f.Data.Dictionary.SetDefaultReturn("Marked_PO_Dict",False)
+	F.Data.DataTable.FillFromDictionary("DPS","Marked_PO_Dict","WO_ID","Marked_PO")
+	f.Data.Dictionary.Close("Marked_PO_Dict")
+	
+	'Note_Dict
+	f.Data.Dictionary.CreateFromSQL("Note_Dict","conx","Select WO_ID, Note from GCG_4857_MPO_Note")
+	f.Data.Dictionary.SetDefaultReturn("Note_Dict","")
+	F.Data.DataTable.FillFromDictionary("DPS","Note_Dict","WO_ID","Note")
+	f.Data.Dictionary.Close("Note_Dict")
+	
+	'WOReq_Dict
+	f.Data.Dictionary.CreateFromSQL("WOReq_Dict","conx","Select JOB + '-' + SUFFIX + '-' + SEQUENCE, Qty_Committed - Qty_Issued from Job_Commitments")
+	f.Data.Dictionary.SetDefaultReturn("WOReq_Dict",0)
+	F.Data.DataTable.FillFromDictionary("DPS","WOReq_Dict","WO_ID","WO_Req")
+	f.Data.Dictionary.Close("WOReq_Dict")
+	
+	'Order_No, Order_Line
+	f.Data.Dictionary.CreateFromSQL("Order_Dict","conx","select JOB + SUFFIX AS JOB_SUFFIX,ORDER_NO from order_to_wo")
+	f.Data.Dictionary.SetDefaultReturn("Order_Dict","")
+	f.Data.DataTable.FillFromDictionary("DPS","Order_Dict","Job_Suffix","Order_No")
+	f.Data.Dictionary.Close("Order_Dict")	
+	f.Data.Dictionary.CreateFromSQL("Line_Dict","conx","select JOB + SUFFIX AS JOB_SUFFIX,left(Order_No,3) from order_to_wo")
+	f.Data.Dictionary.SetDefaultReturn("Line_Dict","")
+	f.Data.DataTable.FillFromDictionary("DPS","Line_Dict","Job_Suffix","Order_Line")
+	f.Data.Dictionary.Close("Line_Dict")
+		
+	'Add GridView
+	gui.Form.gsActive.AddGridviewFromDatatable("ActiveGV","DPS")
+	
+	'Format Grid
+	Gui.Form.gsActive.SuspendLayout()
+	Gui.Form.gsActive.SetGridViewProperty("ActiveGV","AllowSort",True)
+	Gui.Form.gsActive.SetGridViewProperty("ActiveGV","AllowFilter",True)
+	Gui.Form.gsActive.SetGridViewProperty("ActiveGV","Enableappearanceoddrow",True)
+	Gui.Form.gsActive.SetGridViewProperty("ActiveGV","OptionsFindAlwaysVisible",True)
+	Gui.Form.gsActive.SetGridViewProperty("ActiveGV","OptionsViewShowAutoFilterRow",True)
+	Gui.Form.gsActive.SetGridViewProperty("ActiveGV","OptionsFilterUseNewCustomFilterDialog",True)
+	
+	v.Global.bInSecurityGroup.Set(True)
+	
+	f.Intrinsic.Control.If(v.Global.bInSecurityGroup,=,True)
+		'Editable
+		f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsActive","GV","ActiveGV","sInputColumns","Marked_PO,Note","sProperty","Editable")
+		'For_RowCellClick
+		f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsActive","GV","ActiveGV","sInputColumns","CreatePO","sProperty","For_RowCellClick")
+		'Link
+		f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsActive","GV","ActiveGV","sInputColumns","CreatePO","sProperty","Link")
+	f.Intrinsic.Control.EndIf
+	
+	'Link no matter in security group or not
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsActive","GV","ActiveGV","sInputColumns","Part","sProperty","Link")
+	'For_RowCellClick
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsActive","GV","ActiveGV","sInputColumns","Part","sProperty","For_RowCellClick")
+	'Width		
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsActive","GV","ActiveGV","sInputColumns","DPAS_Text,Part,Net","sProperty","Width","sWidth","150")	
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsActive","GV","ActiveGV","sInputColumns","Order_NO,CREATEPO","sProperty","Width","sWidth","70")	
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsActive","GV","ActiveGV","sInputColumns","PROJ,JOB,SEQ","sProperty","Width","sWidth","50")
+
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsActive","GV","ActiveGV","sInputColumns","ORDER_LINE,SUFFIX,MARKED_PO","sProperty","Width","sWidth","40")
+	'InVisible
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsActive","GV","ActiveGV","sInputColumns","WO_ID,Job_Suffix","sProperty","Invisible")
+	'HeaderAllign right for numeric columns
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsActive","GV","ActiveGV","sInputColumns","QTY_ONHAND,QTY_ONORDER_PO,QTY_REQUIRED,WO_Req,NET","sProperty","HeaderAllign_Far")
+	'Visible Index
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsActive","GV","ActiveGV","sInputColumns","PROJ,Order_No,Order_Line,DPAS_TEXT,JOB,SUFFIX,SEQ,PART,QTY_ONHAND,QTY_ONORDER_PO,WO_Req,QTY_REQUIRED,NET,MARKED_PO,NOTE,CREATEPO","sProperty","VisibleIndex")
+	'Caption
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsActive","GV","ActiveGV","sInputColumns","PROJ@!@Project,Order_NO@!@Sales Order,Order_Line@!@Line,DPAS_Text@!@DPAS Ratings,Qty_OnHand@!@On Hand,Qty_OnOrder_PO@!@On PO,Qty_Required@!@Total Req,WO_Req@!@WO Req,Net@!@Net: OnHand + OnPO - Req,Marked_PO@!@Marked,Suffix@!@Suf,JOB@!@Job,SEQ@!@Seq,PART@!@Part,CreatePO@!@Create PO","sProperty","Caption")
+	'Display numeric
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsActive","GV","ActiveGV","sInputColumns","Net,WO_Req","sProperty","DisplayNumeric")
+	
+	'Set Active Grid
+	gui.Form.gsActive.MainView("ActiveGV")
+	
+	'Set anchor and show
+	GUI.Form.gsActive.Anchor(15)
+	GUI.Form.cmdRefresh.Anchor(10)
+	
+	Gui.Form.gsActive.ResumeLayout()
+	gui.Form..Show
+
+F.Intrinsic.Control.Catch
+	Function.Intrinsic.String.Build("Subroutine Error {0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+
+Program.Sub.cmdRefresh_Click.End
+
+Program.Sub.gsActive_CellValueChanged.Start
+F.Intrinsic.Control.Try
+	v.Local..BulkDeclareString(sError,sSQL,sRet)
+	v.Local.iMarked_PO.Declare
+
+	f.Intrinsic.Control.If(v.Args.Column,=,"Marked_PO",or,v.Args.Column,=,"Note")
+		f.Intrinsic.Control.if(v.Args.Column,=,"Marked_PO")
+			f.Intrinsic.Control.If(v.DataTable.DPS(v.Args.RowIndex).Marked_PO!FieldVal)
+				v.Local.iMarked_PO.Set(0)
+			f.Intrinsic.Control.Else
+				v.Local.iMarked_PO.Set(1)
+			f.Intrinsic.Control.EndIf
+		f.Intrinsic.Control.EndIf
+		
+		f.Intrinsic.Control.if(v.Args.Column,=,"Note")
+			f.Intrinsic.Control.If(v.DataTable.DPS(v.Args.RowIndex).Marked_PO!FieldVal)
+				v.Local.iMarked_PO.Set(1)
+			f.Intrinsic.Control.Else
+				v.Local.iMarked_PO.Set(0)
+			f.Intrinsic.Control.EndIf
+		f.Intrinsic.Control.EndIf
+	
+		f.Intrinsic.String.Build("Select * from  GCG_4857_MPO_Note where WO_ID = '{0}'",v.DataTable.DPS(v.Args.RowIndex).WO_ID!FieldValTrim,v.Local.SSQL)
+		F.odbc.Connection!conx.ExecuteAndReturn(v.Local.sSQL,v.Local.sRet)
+		f.Intrinsic.Control.If(v.Local.sRet,<>,"")
+			f.Intrinsic.String.Build("Update GCG_4857_MPO_Note set Marked_PO = {0}, Note = '{1}' where WO_ID = '{2}'",v.local.iMarked_PO,v.DataTable.DPS(v.Args.RowIndex).Note!FieldValTrim,v.DataTable.DPS(v.Args.RowIndex).WO_ID!FieldValTrim,v.Local.SSQL)
+			F.odbc.Connection!conx.Execute(v.Local.sSQL)
+		f.Intrinsic.Control.Else			
+			f.Intrinsic.String.Build("Insert into GCG_4857_MPO_Note (WO_ID,MARKED_PO,NOTE) values ('{0}',{1},'{2}')",v.DataTable.DPS(v.Args.RowIndex).WO_ID!FieldValTrim,v.Local.iMarked_PO,v.DataTable.DPS(v.Args.RowIndex).Note!FieldValTrim,v.Local.SSQL)
+			F.odbc.Connection!conx.Execute(v.Local.sSQL)
+		f.Intrinsic.Control.EndIf
+	f.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+Program.Sub.gsActive_CellValueChanged.End
+
+Program.Sub.FormatBulk.Start
+F.Intrinsic.Control.Try
+	V.Local..BulkDeclareString(sError,sColumns,sHold)
+	v.Local.iCnt.Declare
+	
+	f.Intrinsic.String.Split(v.Args.sInputColumns,",",v.Local.sColumns)
+	
+	f.Intrinsic.Control.For(v.Local.iCnt,0,v.Local.sColumns.UBound,1)
+	
+		F.Intrinsic.Control.SelectCase(v.Args.sProperty)
+			F.Intrinsic.Control.Case("Width")
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"MinWidth",v.Args.sWidth)
+			F.Intrinsic.Control.Case("Invisible")
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"Visible",False)
+			F.Intrinsic.Control.Case("VisibleIndex")
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"VisibleIndex",v.Local.iCnt)
+			F.Intrinsic.Control.Case("HeaderFontBold")
+				Gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,V.Local.sColumns(V.Local.iCnt),"HeaderFontBold",True)
+			F.Intrinsic.Control.Case("HeaderBackColor")
+				Gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,V.Local.sColumns(V.Local.iCnt),"HeaderBackColor",v.Color.PRI-GSS-01)
+			F.Intrinsic.Control.Case("DisplayNumeric")
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"DisplayCustomNumeric","#,###,###,##0.0000")
+			F.Intrinsic.Control.Case("Caption")
+				f.Intrinsic.String.Split(v.Local.sColumns(v.Local.iCnt),"@!@",v.Local.sHold)
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sHold(0),"Caption",v.Local.sHold(1))
+			F.Intrinsic.Control.Case("HeaderAllign_Far")
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"HeaderHAlignment","Far")
+			F.Intrinsic.Control.Case("Editable")		
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"AllowEdit",True)
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"ReadOnly",False)
+			F.Intrinsic.Control.Case("For_RowCellClick")
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"AllowEdit",False)
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"ReadOnly",True)			
+			f.Intrinsic.Control.Case("Link")
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"CellForeColor","Blue")
+		F.Intrinsic.Control.EndSelect	
+		
+	f.Intrinsic.Control.Next(v.Local.iCnt)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)	
+	F.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+Program.Sub.FormatBulk.End
+
+Program.Sub.Form_UnLoad.Start
+f.Intrinsic.Control.CallSub("Unload")
+Program.Sub.Form_UnLoad.End
+
+Program.Sub.gsActive_RowCellClick1.Start
+F.Intrinsic.Control.Try
+	v.Local..BulkDeclareString(sError,sMsg,sHold,sRet,sNewPONum,sVendor,sParamsNewPO,sSQL)
+	v.Local.iPID.Declare	
+	F.Intrinsic.Control.SelectCase(v.Args.Column)
+	
+		F.Intrinsic.Control.Case("CreatePO")
+			'Create a PO for the underlined Part from Job,Suffix,Seq
+			f.ODBC.Connection!conx.ExecuteAndReturn("select  Cast(max(Purchase_Order) as Integer) + 1  from PO_header where Purchase_Order > '10007978' and Purchase_Order < '2000011'",v.Local.sNewPONum)
+			f.Intrinsic.Control.If(v.Local.sNewPONum,=,"2000011")
+				f.ODBC.Connection!conx.ExecuteAndReturn("select  Cast(max(Purchase_Order) as Integer) + 1  from PO_header where Purchase_Order > '2000011'",v.Local.sNewPONum)
+			f.Intrinsic.Control.EndIf		
+			f.Intrinsic.String.Build("select top 1 vendor from inv_cross_ref where vendor <> '' and part = '{0}'",v.DataTable.DPS(v.Args.RowIndex).Part!FieldValString,v.Local.sSQL)
+			f.ODBC.Connection!conx.ExecuteAndReturn(v.Local.sSQL,v.Local.sVendor)
+			f.Intrinsic.String.Build("N!*!{0}!*!{1}",v.Local.sNewPONum,v.Local.sVendor,v.Local.sParamsNewPO)		
+			F.Global.General.CallWrapperSync(175200,v.Local.sParamsNewPO)		
+			F.Intrinsic.Control.CallSub("cmdRefresh_Click")
+		F.Intrinsic.Control.Case("Part")
+			'Open Supply and Demand screen for the underlined Part
+			f.Intrinsic.String.Build("{0}!*!",v.DataTable.DPS(v.Args.RowIndex).Part!FieldValString,v.Local.sHold)
+			F.Global.General.CallWrapperASync(300010,v.Local.sHold)
+			F.Intrinsic.Control.ExitSub
+			
+	F.Intrinsic.Control.EndSelect	
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)	
+	F.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+Program.Sub.gsActive_RowCellClick1.End
+
+Program.Sub.Unload.Start
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare
+
+	F.Intrinsic.Control.If(V.ODBC.conx.State,=,1)
+		F.ODBC.Connection!conx.close
+	F.Intrinsic.Control.EndIf
+	
+	f.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	Function.Intrinsic.String.Build("Subroutine Error {0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End 
+F.Intrinsic.Control.EndTry
+Program.Sub.Unload.End
